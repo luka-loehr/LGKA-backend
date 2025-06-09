@@ -408,7 +408,7 @@ cron.schedule('*/5 * * * *', () => {
 });
 
 // Start server
-app.listen(PORT, async () => {
+app.listen(PORT, '0.0.0.0', async () => {
   console.log(`[DEBUG] Server startup: LGKA Backend server running on port ${PORT}`);
   console.log('[DEBUG] Server startup: Express app configured with middleware');
   console.log('[DEBUG] Server startup: Routes registered');
