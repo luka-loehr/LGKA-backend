@@ -6,6 +6,7 @@ const morgan = require('morgan');
 const axios = require('axios');
 const cron = require('node-cron');
 const pdfParse = require('pdf-parse');
+const { GoogleGenerativeAI } = require('@google/generative-ai');
 require('dotenv').config();
 
 const app = express();
@@ -26,99 +27,231 @@ let processedData = {
   error: null
 };
 
-// PDF URLs (replace with actual LGKA URLs)
+// PDF URLs from the Flutter app
 const PDF_URLS = {
-  today: 'https://lgka.de/substitution-plans/today.pdf',
-  tomorrow: 'https://lgka.de/substitution-plans/tomorrow.pdf'
+  today: 'https://lessing-gymnasium-karlsruhe.de/stundenplan/schueler/v_schueler_heute.pdf',
+  tomorrow: 'https://lessing-gymnasium-karlsruhe.de/stundenplan/schueler/v_schueler_morgen.pdf'
 };
+
+// Basic Auth credentials (from Flutter app)
+const AUTH_CREDENTIALS = {
+  username: 'vertretungsplan',
+  password: 'ephraim'
+};
+
+// Initialize Google AI
+const genAI = new GoogleGenerativeAI(process.env.GOOGLE_AI_API_KEY || 'your-api-key-here');
+
+// AI-only parsing - no mock data needed
 
 // Helper function to normalize class names
 function normalizeClassName(className) {
-  if (!className) return '';
-  return className.toLowerCase().replace(/\s+/g, '');
+  console.log(`[DEBUG] normalizeClassName input: "${className}"`);
+  if (!className) {
+    console.log(`[DEBUG] normalizeClassName: empty input, returning empty string`);
+    return '';
+  }
+  const normalized = className.toLowerCase().replace(/\s+/g, '');
+  console.log(`[DEBUG] normalizeClassName output: "${normalized}"`);
+  return normalized;
 }
 
 // Helper function to extract and parse PDF content
 async function extractTextFromPDF(pdfBuffer) {
   try {
+    console.log(`[DEBUG] extractTextFromPDF: Starting PDF parsing, buffer size: ${pdfBuffer.length} bytes`);
     const data = await pdfParse(pdfBuffer);
+    console.log(`[DEBUG] extractTextFromPDF: PDF parsed successfully, text length: ${data.text.length} characters`);
+    console.log(`[DEBUG] extractTextFromPDF: First 200 characters of text: "${data.text.substring(0, 200)}"`);
     return data.text;
   } catch (error) {
-    console.error('PDF parsing error:', error);
+    console.error('[DEBUG] PDF parsing error:', error);
     throw new Error('Failed to parse PDF');
   }
 }
 
-// Helper function to parse German substitute plan format
-function parseSubstitutePlan(text, targetClass = null) {
-  const lines = text.split('\n').filter(line => line.trim());
-  const substitutions = [];
+// Simple AI test function - summarize PDF in 8 words
+async function testAISummary(text, pdfName) {
+  console.log(`[DEBUG] testAISummary: Testing AI with ${pdfName}, text length: ${text.length}`);
   
-  // Common patterns in German substitute plans
-  const substitutionPattern = /(\d+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s+([^\s]+)\s*(.*)?/;
-  
-  for (const line of lines) {
-    const match = line.match(substitutionPattern);
-    if (match) {
-      const [, period, originalClass, subject, teacher, room, notes = ''] = match;
-      
-      // If targetClass is specified, filter for that class
-      if (targetClass && normalizeClassName(originalClass) !== normalizeClassName(targetClass)) {
-        continue;
-      }
-      
-      substitutions.push({
-        period: period.trim(),
-        class: originalClass.trim(),
-        subject: subject.trim(),
-        teacher: teacher.trim(),
-        room: room.trim(),
-        notes: notes.trim(),
-        timestamp: new Date().toISOString()
-      });
-    }
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    
+    const prompt = `Summarize this German school substitute plan in exactly 8 words:
+
+${text}
+
+Respond with exactly 8 words, nothing else.`;
+
+    console.log(`[DEBUG] testAISummary: Sending summary prompt to Gemini for ${pdfName}...`);
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const aiText = response.text().trim();
+    
+    console.log(`[DEBUG] testAISummary: AI summary for ${pdfName}: "${aiText}"`);
+    return aiText;
+    
+  } catch (error) {
+    console.error(`[DEBUG] testAISummary: AI summary failed for ${pdfName}:`, error.message);
+    return `AI unavailable - fallback summary for ${pdfName}`;
   }
-  
-  return substitutions;
 }
+
+// AI-powered function to parse German substitute plan format
+async function parseSubstitutePlanWithAI(text, targetClass = null) {
+  console.log(`[DEBUG] parseSubstitutePlanWithAI: Starting AI parse, text length: ${text.length}, targetClass: ${targetClass}`);
+  
+  try {
+    const model = genAI.getGenerativeModel({ model: "gemini-2.0-flash" });
+    
+    const prompt = `Analyze this German substitute plan (Vertretungsplan) and extract ALL substitution entries as a JSON array.
+
+IMPORTANT: Look for these patterns in the text:
+- "Vertretung3 - 46abcdKob102kRCop102" = Substitution for period 3, classes 6abcd, teacher Kob, room 102, replacing teacher Cop
+- "Entfall5 - 66c---------NphPieNWT3" = Cancellation for period 5, class 6c, subject Nph, teacher Pie, room NWT3  
+- "Raum-Vtr.3 - 47bBruPh310PhBruPHHS" = Room change for period 3, class 7b, teacher Bru, subject Ph, new room 310, old room PHHS
+- "Verlegung39cBrnF203ChBetCHHS" = Relocation for period 3, class 9c, teacher Brn, subject F, room 203, replacing Ch teacher Bet
+
+Extract EVERY substitution entry and return as valid JSON array:
+[
+  {
+    "type": "Vertretung|Entfall|Raum-Vtr|Verlegung",
+    "period": "period number",
+    "class": "class name (e.g. 6abcd, 7b, J12)",
+    "subject": "subject abbreviation", 
+    "teacher": "teacher name",
+    "room": "room number",
+    "originalSubject": "original subject if different",
+    "originalTeacher": "original teacher if different",
+    "originalRoom": "original room if different", 
+    "notes": "additional notes",
+    "timestamp": "${new Date().toISOString()}"
+  }
+]
+
+${targetClass ? `FILTER: Only return entries for class "${targetClass}" (case-insensitive).` : ''}
+
+TEXT TO ANALYZE:
+${text}
+
+Return ONLY valid JSON array, no explanations or markdown.`;
+
+    console.log(`[DEBUG] parseSubstitutePlanWithAI: Sending parsing prompt to Gemini 2.0...`);
+    const result = await model.generateContent(prompt);
+    const response = await result.response;
+    const aiText = response.text().trim();
+    
+    console.log(`[DEBUG] parseSubstitutePlanWithAI: AI response length: ${aiText.length}`);
+    console.log(`[DEBUG] parseSubstitutePlanWithAI: Raw AI response: ${aiText.substring(0, 300)}...`);
+    
+    // Clean up response and extract JSON
+    let jsonStr = aiText;
+    
+    // Remove markdown code blocks if present
+    jsonStr = jsonStr.replace(/```json\s*/g, '').replace(/```\s*/g, '');
+    
+    // Try to find JSON array
+    const jsonMatch = jsonStr.match(/\[[\s\S]*\]/);
+    if (jsonMatch) {
+      jsonStr = jsonMatch[0];
+    }
+    
+    console.log(`[DEBUG] parseSubstitutePlanWithAI: Cleaned JSON: ${jsonStr.substring(0, 200)}...`);
+    
+    const substitutions = JSON.parse(jsonStr);
+    console.log(`[DEBUG] parseSubstitutePlanWithAI: Successfully parsed ${substitutions.length} substitutions with AI`);
+    
+    return substitutions;
+    
+  } catch (error) {
+    console.error(`[DEBUG] parseSubstitutePlanWithAI: AI parsing failed:`, error.message);
+    console.error(`[DEBUG] parseSubstitutePlanWithAI: Error details:`, error);
+    
+    // Return empty array instead of fallback since we're AI-only
+    console.log(`[DEBUG] parseSubstitutePlanWithAI: Returning empty array - no fallback parsing`);
+    return [];
+  }
+}
+
+
 
 // Function to fetch and process PDFs
 async function updateSubstitutePlans() {
   try {
-    console.log('Updating substitute plans...');
+    console.log('[DEBUG] updateSubstitutePlans: Starting update process...');
+    console.log('[DEBUG] updateSubstitutePlans: PDF URLs:', PDF_URLS);
     
+    console.log('[DEBUG] updateSubstitutePlans: Fetching today\'s PDF...');
     const todayResponse = await axios.get(PDF_URLS.today, { 
       responseType: 'arraybuffer',
-      timeout: 10000
+      timeout: 10000,
+      auth: {
+        username: AUTH_CREDENTIALS.username,
+        password: AUTH_CREDENTIALS.password
+      },
+      httpsAgent: new (require('https').Agent)({
+        rejectUnauthorized: false // Allow self-signed certificates for development
+      })
     });
+    console.log(`[DEBUG] updateSubstitutePlans: Today's PDF fetched, status: ${todayResponse.status}, data size: ${todayResponse.data.byteLength} bytes`);
     
+    console.log('[DEBUG] updateSubstitutePlans: Fetching tomorrow\'s PDF...');
     const tomorrowResponse = await axios.get(PDF_URLS.tomorrow, { 
       responseType: 'arraybuffer',
-      timeout: 10000
+      timeout: 10000,
+      auth: {
+        username: AUTH_CREDENTIALS.username,
+        password: AUTH_CREDENTIALS.password
+      },
+      httpsAgent: new (require('https').Agent)({
+        rejectUnauthorized: false // Allow self-signed certificates for development
+      })
     });
+    console.log(`[DEBUG] updateSubstitutePlans: Tomorrow's PDF fetched, status: ${tomorrowResponse.status}, data size: ${tomorrowResponse.data.byteLength} bytes`);
     
+    console.log('[DEBUG] updateSubstitutePlans: Extracting text from today\'s PDF...');
     const todayText = await extractTextFromPDF(Buffer.from(todayResponse.data));
+    
+    console.log('[DEBUG] updateSubstitutePlans: Extracting text from tomorrow\'s PDF...');
     const tomorrowText = await extractTextFromPDF(Buffer.from(tomorrowResponse.data));
     
+    console.log('[DEBUG] updateSubstitutePlans: Testing AI with both PDFs...');
+    const todaySummary = await testAISummary(todayText, 'today');
+    const tomorrowSummary = await testAISummary(tomorrowText, 'tomorrow');
+    console.log(`[DEBUG] updateSubstitutePlans: AI summaries completed - Today: "${todaySummary}", Tomorrow: "${tomorrowSummary}"`);
+    
+    console.log('[DEBUG] updateSubstitutePlans: Parsing today\'s substitutions with AI...');
+    const todaySubstitutions = await parseSubstitutePlanWithAI(todayText);
+    
+    console.log('[DEBUG] updateSubstitutePlans: Parsing tomorrow\'s substitutions with AI...');
+    const tomorrowSubstitutions = await parseSubstitutePlanWithAI(tomorrowText);
+    
+    const todayDate = new Date().toISOString().split('T')[0];
+    const tomorrowDate = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0];
+    const timestamp = new Date().toISOString();
+    
+    console.log(`[DEBUG] updateSubstitutePlans: Creating processed data structure...`);
     processedData = {
       today: {
-        substitutions: parseSubstitutePlan(todayText),
+        substitutions: todaySubstitutions,
         rawText: todayText,
-        date: new Date().toISOString().split('T')[0]
+        date: todayDate
       },
       tomorrow: {
-        substitutions: parseSubstitutePlan(tomorrowText),
+        substitutions: tomorrowSubstitutions,
         rawText: tomorrowText,
-        date: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString().split('T')[0]
+        date: tomorrowDate
       },
-      lastUpdated: new Date().toISOString(),
+      lastUpdated: timestamp,
       error: null
     };
     
-    console.log(`Updated successfully. Today: ${processedData.today.substitutions.length} substitutions, Tomorrow: ${processedData.tomorrow.substitutions.length} substitutions`);
+    console.log(`[DEBUG] updateSubstitutePlans: Update completed successfully!`);
+    console.log(`[DEBUG] updateSubstitutePlans: Today: ${processedData.today.substitutions.length} substitutions, Tomorrow: ${processedData.tomorrow.substitutions.length} substitutions`);
     
   } catch (error) {
-    console.error('Error updating substitute plans:', error);
+    console.error('[DEBUG] updateSubstitutePlans: Error occurred:', error);
+    console.error('[DEBUG] updateSubstitutePlans: Error stack:', error.stack);
     processedData.error = {
       message: error.message,
       timestamp: new Date().toISOString()
@@ -209,6 +342,7 @@ app.get('/api/substitutions/class/:className', (req, res) => {
   
   const result = {};
   
+  // For AI-parsed data, we can either filter existing results or re-parse with target class
   if (day !== 'tomorrow') {
     result.today = {
       ...processedData.today,
@@ -275,9 +409,13 @@ cron.schedule('*/5 * * * *', () => {
 
 // Start server
 app.listen(PORT, async () => {
-  console.log(`LGKA Backend server running on port ${PORT}`);
-  console.log('Performing initial data fetch...');
+  console.log(`[DEBUG] Server startup: LGKA Backend server running on port ${PORT}`);
+  console.log('[DEBUG] Server startup: Express app configured with middleware');
+  console.log('[DEBUG] Server startup: Routes registered');
+  console.log('[DEBUG] Server startup: Cron job scheduled for every 5 minutes');
+  console.log('[DEBUG] Server startup: Performing initial data fetch...');
   await updateSubstitutePlans();
+  console.log('[DEBUG] Server startup: Initial data fetch completed');
 });
 
 // Graceful shutdown

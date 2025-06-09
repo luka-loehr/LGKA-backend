@@ -1,3 +1,4 @@
+<<<<<<< HEAD
 # LGKA Backend API
 
 A Node.js Express backend for the LGKA Flutter app, designed to run on Railway. This backend processes PDF substitute plans and provides a clean REST API for the mobile app.
@@ -6,11 +7,13 @@ A Node.js Express backend for the LGKA Flutter app, designed to run on Railway. 
 
 - 🚀 **Railway Ready**: Optimized for Railway deployment
 - 📄 **PDF Processing**: Automatically fetches and parses PDF substitute plans
+- 🤖 **AI-Powered Parsing**: Uses Google Gemini AI to intelligently parse German substitute plans
 - 🔄 **Auto Updates**: Checks for new plans every 5 minutes
 - 🎯 **Class Filtering**: Filter substitutions by specific class
 - 💾 **In-Memory Caching**: Fast response times with intelligent caching
 - 🛡️ **Security**: Helmet, CORS, and compression middleware
 - 📊 **Health Monitoring**: Built-in health check endpoint
+- 🔄 **Fallback System**: Graceful degradation if AI parsing fails
 
 ## API Endpoints
 
@@ -75,9 +78,10 @@ GET /api/substitutions/class/9B
    - Select your forked repository
 
 3. **Environment Variables**:
-   Railway will automatically set `PORT`. Optionally configure:
+   Railway will automatically set `PORT`. Configure these required variables:
    ```
    NODE_ENV=production
+   GOOGLE_AI_API_KEY=your-google-ai-api-key
    TODAY_PDF_URL=https://your-school.de/today.pdf
    TOMORROW_PDF_URL=https://your-school.de/tomorrow.pdf
    ```
@@ -103,7 +107,7 @@ npm install
 # Copy environment variables
 cp .env.example .env
 
-# Edit .env with your PDF URLs
+# Edit .env with your Google AI API key and PDF URLs
 nano .env
 
 # Start development server
@@ -113,6 +117,19 @@ npm run dev
 The server will start on `http://localhost:3000`
 
 ## Configuration
+
+### Google AI Setup
+
+1. **Get API Key**:
+   - Go to [Google AI Studio](https://aistudio.google.com/app/apikey)
+   - Create a new API key
+   - Copy the key to your `.env` file as `GOOGLE_AI_API_KEY`
+
+2. **AI Features**:
+   - Intelligently parses German substitute plan text
+   - Extracts periods, classes, subjects, teachers, rooms
+   - Handles complex formats like "Vertretung3 - 46abcdKob102kRCop102"
+   - Falls back to regex parsing if AI is unavailable
 
 ### PDF URLs
 Update the PDF URLs in your environment variables or directly in `server.js`:
@@ -200,3 +217,6 @@ For issues or questions:
 ## License
 
 Copyright Luka Löhr 2025 
+=======
+# LGKA-backend
+>>>>>>> f22a9956951fb2349e287906f89e52a068e093a8
