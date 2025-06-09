@@ -277,13 +277,23 @@ app.get('/', (req, res) => {
 });
 
 app.get('/api/health', (req, res) => {
-  res.json({
-    status: 'healthy',
-    timestamp: new Date().toISOString(),
-    uptime: process.uptime(),
-    lastUpdated: processedData.lastUpdated,
-    hasError: !!processedData.error
-  });
+  try {
+    res.json({
+      status: 'healthy',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      lastUpdated: processedData?.lastUpdated || 'not-yet-fetched',
+      hasError: !!processedData?.error,
+      dataReady: !!processedData?.today
+    });
+  } catch (error) {
+    res.json({
+      status: 'healthy-but-initializing',
+      timestamp: new Date().toISOString(),
+      uptime: process.uptime(),
+      error: error.message
+    });
+  }
 });
 
 app.get('/api/substitutions', (req, res) => {
@@ -414,17 +424,17 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log('[DEBUG] Server startup: Routes registered');
   console.log('[DEBUG] Server startup: Cron job scheduled for every 5 minutes');
   
-  // Delay initial data fetch to allow server to start properly
-  console.log('[DEBUG] Server startup: Scheduling initial data fetch in 10 seconds...');
-  setTimeout(async () => {
-    console.log('[DEBUG] Server startup: Performing initial data fetch...');
+  // Start initial data fetch in background (don't block server startup)
+  console.log('[DEBUG] Server startup: Starting background data fetch...');
+  setImmediate(async () => {
     try {
+      console.log('[DEBUG] Background: Performing initial data fetch...');
       await updateSubstitutePlans();
-      console.log('[DEBUG] Server startup: Initial data fetch completed');
+      console.log('[DEBUG] Background: Initial data fetch completed');
     } catch (error) {
-      console.error('[DEBUG] Server startup: Initial data fetch failed:', error.message);
+      console.error('[DEBUG] Background: Initial data fetch failed:', error.message);
     }
-  }, 10000);
+  });
 });
 
 // Graceful shutdown
