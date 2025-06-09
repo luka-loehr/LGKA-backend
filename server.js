@@ -413,9 +413,18 @@ app.listen(PORT, '0.0.0.0', async () => {
   console.log('[DEBUG] Server startup: Express app configured with middleware');
   console.log('[DEBUG] Server startup: Routes registered');
   console.log('[DEBUG] Server startup: Cron job scheduled for every 5 minutes');
-  console.log('[DEBUG] Server startup: Performing initial data fetch...');
-  await updateSubstitutePlans();
-  console.log('[DEBUG] Server startup: Initial data fetch completed');
+  
+  // Delay initial data fetch to allow server to start properly
+  console.log('[DEBUG] Server startup: Scheduling initial data fetch in 10 seconds...');
+  setTimeout(async () => {
+    console.log('[DEBUG] Server startup: Performing initial data fetch...');
+    try {
+      await updateSubstitutePlans();
+      console.log('[DEBUG] Server startup: Initial data fetch completed');
+    } catch (error) {
+      console.error('[DEBUG] Server startup: Initial data fetch failed:', error.message);
+    }
+  }, 10000);
 });
 
 // Graceful shutdown
